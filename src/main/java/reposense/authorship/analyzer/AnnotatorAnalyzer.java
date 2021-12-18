@@ -25,7 +25,7 @@ import reposense.model.AuthorConfiguration;
 public class AnnotatorAnalyzer {
     private static final String AUTHOR_TAG = "@@author";
     // GitHub username format
-    private static final String REGEX_AUTHOR_NAME_FORMAT = "@[a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38}\\s\\d+";
+    private static final String REGEX_AUTHOR_NAME_FORMAT = "@[a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38}\\s\\d*";
     private static final Pattern PATTERN_AUTHOR_NAME_FORMAT = Pattern.compile(REGEX_AUTHOR_NAME_FORMAT);
     private static final String REGEX_AUTHOR_TAG_FORMAT = "@@author(\\s+[^\\s]+)?";
 
@@ -96,12 +96,9 @@ public class AnnotatorAnalyzer {
     }
 
     /**
-     * Extracts the author name from the given {@code line}, finds the corresponding {@code Author}
-     * in {@code authorAliasMap}, and returns this {@code Author} stored in an {@code Optional}.
-     * @return {@code Optional.of(Author#UNKNOWN_AUTHOR)} if there is an author config file and
-     *              no matching {@code Author} is found,
-     *         {@code Optional.empty()} if an end author tag is used (i.e. "@@author"),
-     *         {@code Optional.of(Author#tagged author)} otherwise.
+     * Extracts the author name and correspond authorship weight from the given {@code line},
+     * finds the corresponding {@code Author} in {@code authorAliasMap}, and returns the author
+     * and their authorship weight as a key-value pair in a hashmap stored in an {@code Optional}.
      */
     private static Optional<HashMap<Author, Integer>> findAuthorsInLine(String line, AuthorConfiguration authorConfig,
         boolean foundStartAnnotation, int formatIndex, Path filePath) {
@@ -126,7 +123,7 @@ public class AnnotatorAnalyzer {
                     String parameters = matcher.group();
                     String[] splitParameters = parameters.split(" ");
                     String author = splitParameters[0].split("@")[1];
-                    Integer weight = Integer.parseInt(splitParameters[1]);
+                    Integer weight = Integer.parseInt(splitParameters[1].isEmpty() ? "100" : splitParameters[1]);
 
                     if (!authorAliasMap.containsKey(author) && !AuthorConfiguration.hasAuthorConfigFile()) {
                         authorConfig.addAuthor(new Author(author));
