@@ -25,10 +25,9 @@ import reposense.model.AuthorConfiguration;
 public class AnnotatorAnalyzer {
     private static final String AUTHOR_TAG = "@@author";
     // GitHub username format
-    private static final String REGEX_AUTHOR_NAME_FORMAT = "[a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38}\\sd+";
+    private static final String REGEX_AUTHOR_NAME_FORMAT = "@[a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38}\\s\\d+";
     private static final Pattern PATTERN_AUTHOR_NAME_FORMAT = Pattern.compile(REGEX_AUTHOR_NAME_FORMAT);
     private static final String REGEX_AUTHOR_TAG_FORMAT = "@@author(\\s+[^\\s]+)?";
-    private static final String AUTHOR_TAG_FORMAT = "@[A-Z]";
 
     private static final String[][] COMMENT_FORMATS = {
             {"//", "\\s"},
@@ -50,7 +49,6 @@ public class AnnotatorAnalyzer {
      * Overrides the authorship information in {@code fileInfo} based on annotations given on the file.
      */
     public static void aggregateAnnotationAuthorInfo(FileInfo fileInfo, AuthorConfiguration authorConfig) {
-        Optional<Author> currentAnnotatedAuthor = Optional.empty();
         Path filePath = Paths.get(fileInfo.getPath());
 
         boolean foundStartAnnotation = false;
@@ -62,7 +60,7 @@ public class AnnotatorAnalyzer {
                 int formatIndex = checkValidCommentLine(lineContent);
                 if (formatIndex >= 0) {
                     Optional<HashMap<Author, Integer>> newAnnotatedAuthors = findAuthorsInLine(lineContent, authorConfig,
-                             formatIndex);
+                             foundStartAnnotation, formatIndex, filePath);
 
                     //end author flag
                     if (!newAnnotatedAuthors.isPresent()) {
@@ -78,9 +76,8 @@ public class AnnotatorAnalyzer {
                             foundStartAnnotation = false;
 
                         }
-                        lineInfo.setAuthor(currentAnnotatedAuthor.get());
                     //start of new block
-                    } else if (!newAnnotatedAuthors.get().isIgnoringFile(filePath)) {
+                    } else {
                         currentBlock.setContributionMap(newAnnotatedAuthors.get());
                         currentBlock.setStartLineNumber(lineInfo.getLineNumber());
                         currentBlock.addLine(lineInfo);
@@ -89,13 +86,13 @@ public class AnnotatorAnalyzer {
                         foundStartAnnotation = true;
                     }
                 }
-                } else {
-                    if (foundStartAnnotation) {
-                        currentBlock.addLine(lineInfo);
-                        fileInfo.removeLine(lineInfo);
-                    }
+            } else {
+                if (foundStartAnnotation) {
+                    currentBlock.addLine(lineInfo);
+                    fileInfo.removeLine(lineInfo);
                 }
             }
+        }
     }
 
     /**
@@ -106,48 +103,56 @@ public class AnnotatorAnalyzer {
      *         {@code Optional.empty()} if an end author tag is used (i.e. "@@author"),
      *         {@code Optional.of(Author#tagged author)} otherwise.
      */
-    private static Optional<Author> findAuthorInLine(String line, AuthorConfiguration authorConfig,
-                    Optional<Author> currentAnnotatedAuthor, int formatIndex) {
+    private static Optional<HashMap<Author, Integer>> findAuthorsInLine(String line, AuthorConfiguration authorConfig,
+        boolean foundStartAnnotation, int formatIndex, Path filePath) {
         try {
             Map<String, Author> authorAliasMap = authorConfig.getAuthorDetailsToAuthorMap();
-            String name = extractAuthorName(line, formatIndex);
-            if (name == null) {
-                if (!currentAnnotatedAuthor.isPresent()) {
-                    // Attribute to unknown author if an empty author tag was provided, but not as an end author tag
-                    return Optional.of(Author.UNKNOWN_AUTHOR);
-                }
-                return Optional.empty();
-            }
-            if (!authorAliasMap.containsKey(name) && !AuthorConfiguration.hasAuthorConfigFile()) {
-                authorConfig.addAuthor(new Author(name));
-            }
-            return Optional.of(authorAliasMap.getOrDefault(name, Author.UNKNOWN_AUTHOR));
-        } catch (ArrayIndexOutOfBoundsException e) {
-            if (!currentAnnotatedAuthor.isPresent()) {
-                return Optional.of(Author.UNKNOWN_AUTHOR);
-            }
-            return Optional.empty();
-        }
-    }
+            String authorsParameters = extractAuthorsParameters(line, formatIndex);
 
-    private static Optional<HashMap<Author, Integer>> findAuthorsInLine(String line, AuthorConfiguration authorConfig, int formatIndex) {
-        try {
-            Map<String, Author> authorAliasMap = authorConfig.getAuthorDetailsToAuthorMap();
-            String name = extractAuthorName(line, formatIndex);
-            if (name == null) {
-                if (!currentAnnotatedAuthor.isPresent()) {
-                    // Attribute to unknown author if an empty author tag was provided, but not as an end author tag
-                    return Optional.of(Author.UNKNOWN_AUTHOR);
+            if (authorsParameters.isEmpty()) {
+                if (!foundStartAnnotation) {
+                    // Attribute to only unknown author if an empty author tag was provided, but not as an end author tag
+                    HashMap<Author, Integer> newAnnotatedAuthors = new HashMap<>();
+                    newAnnotatedAuthors.put(Author.UNKNOWN_AUTHOR, 1);
+                    return Optional.of(newAnnotatedAuthors);
                 }
                 return Optional.empty();
+            } else {
+                Matcher matcher = PATTERN_AUTHOR_NAME_FORMAT.matcher(authorsParameters);
+                boolean foundMatch = matcher.find();
+                HashMap<Author, Integer> newAnnotatedAuthors = new HashMap<>();
+
+                while(foundMatch) {
+                    String parameters = matcher.group();
+                    String[] splitParameters = parameters.split(" ");
+                    String author = splitParameters[0].split("@")[1];
+                    Integer weight = Integer.parseInt(splitParameters[1]);
+
+                    if (!authorAliasMap.containsKey(author) && !AuthorConfiguration.hasAuthorConfigFile()) {
+                        authorConfig.addAuthor(new Author(author));
+                    }
+
+                    Author annotatedAuthor = authorAliasMap.getOrDefault(author, Author.UNKNOWN_AUTHOR);
+
+                    if (!annotatedAuthor.isIgnoringFile(filePath)) {
+                        newAnnotatedAuthors.put(annotatedAuthor, weight);
+                    }
+
+                    foundMatch = matcher.find();
+                }
+
+                //no matching parameters
+                if (newAnnotatedAuthors.isEmpty()) {
+                    newAnnotatedAuthors.put(Author.UNKNOWN_AUTHOR, 1);
+                }
+
+                return Optional.of(newAnnotatedAuthors);
             }
-            if (!authorAliasMap.containsKey(name) && !AuthorConfiguration.hasAuthorConfigFile()) {
-                authorConfig.addAuthor(new Author(name));
-            }
-            return Optional.of(authorAliasMap.getOrDefault(name, Author.UNKNOWN_AUTHOR));
         } catch (ArrayIndexOutOfBoundsException e) {
-            if (!currentAnnotatedAuthor.isPresent()) {
-                return Optional.of(Author.UNKNOWN_AUTHOR);
+            if (!foundStartAnnotation) {
+                HashMap<Author, Integer> newAnnotatedAuthors = new HashMap<>();
+                newAnnotatedAuthors.put(Author.UNKNOWN_AUTHOR, 1);
+                return Optional.of(newAnnotatedAuthors);
             }
             return Optional.empty();
         }
@@ -158,7 +163,7 @@ public class AnnotatorAnalyzer {
      *
      * @return an empty string if no such author was found, the new author name otherwise
      */
-    public static String extractAuthorName(String line, int formatIndex) {
+    public static String extractAuthorsParameters(String line, int formatIndex) {
         String[] splitByAuthorTag = line.split(AUTHOR_TAG);
         if (splitByAuthorTag.length < 2) {
             return null;
@@ -169,11 +174,7 @@ public class AnnotatorAnalyzer {
             return null;
         }
         String authorTagParameters = splitByCommentFormat[0];
-        String trimmedParameters = authorTagParameters.trim();
-        Matcher matcher = PATTERN_AUTHOR_NAME_FORMAT.matcher(trimmedParameters);
-
-        boolean foundMatch = matcher.find();
-        return (foundMatch) ? trimmedParameters : null;
+        return authorTagParameters.trim();
     }
 
     private static String generateCommentRegex(String commentStart, String commentEnd) {
