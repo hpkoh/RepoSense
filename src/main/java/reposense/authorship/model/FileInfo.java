@@ -114,4 +114,12 @@ public class FileInfo {
         return path.equals(otherFileInfo.path)
                 && lines.equals(otherFileInfo.lines);
     }
+
+    public boolean removeLines(ArrayList<LineInfo> toRemove) {
+        return lines.removeAll(toRemove);
+    }
+
+    public boolean addBlocks(ArrayList<TextBlockInfo> toAdd) {
+        return blocks.addAll(toAdd);
+    }
 }

@@ -2,9 +2,7 @@ package reposense.authorship.analyzer;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -25,9 +23,9 @@ import reposense.model.AuthorConfiguration;
 public class AnnotatorAnalyzer {
     private static final String AUTHOR_TAG = "@@author";
     // GitHub username format
-    private static final String REGEX_AUTHOR_NAME_FORMAT = "@[a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38}\\s\\d*";
+    private static final String REGEX_AUTHOR_NAME_FORMAT = "[a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38}\\s\\d*";
     private static final Pattern PATTERN_AUTHOR_NAME_FORMAT = Pattern.compile(REGEX_AUTHOR_NAME_FORMAT);
-    private static final String REGEX_AUTHOR_TAG_FORMAT = "@@author(\\s+[^\\s]+)?";
+    private static final String REGEX_AUTHOR_TAG_FORMAT = "@@author(\\s+[^\\s]+)*";
 
     private static final String[][] COMMENT_FORMATS = {
             {"//", "\\s"},
@@ -50,9 +48,11 @@ public class AnnotatorAnalyzer {
      */
     public static void aggregateAnnotationAuthorInfo(FileInfo fileInfo, AuthorConfiguration authorConfig) {
         Path filePath = Paths.get(fileInfo.getPath());
+        ArrayList<LineInfo> toRemove = new ArrayList<>();
+        ArrayList<TextBlockInfo> toAdd = new ArrayList<>();
 
         boolean foundStartAnnotation = false;
-        TextBlockInfo currentBlock = new TextBlockInfo();
+        TextBlockInfo currentBlock = null;
 
         for (LineInfo lineInfo : fileInfo.getLines()) {
             String lineContent = lineInfo.getContent();
@@ -68,20 +68,24 @@ public class AnnotatorAnalyzer {
                         if (foundStartAnnotation) {
                             currentBlock.setEndLineNumber(lineInfo.getLineNumber());
                             currentBlock.addLine(lineInfo);
-                            fileInfo.removeLine(lineInfo);
+                            toRemove.add(lineInfo);
+//                            fileInfo.removeLine(lineInfo);
 
                             //add complete block to fileInfo and reset block
-                            fileInfo.addTextBlock(currentBlock);
-                            currentBlock = new TextBlockInfo();
+                            toAdd.add(currentBlock);
+//                            fileInfo.addTextBlock(currentBlock);
+                            currentBlock = null;
                             foundStartAnnotation = false;
 
                         }
                     //start of new block
                     } else {
+                        currentBlock = new TextBlockInfo();
                         currentBlock.setContributionMap(newAnnotatedAuthors.get());
                         currentBlock.setStartLineNumber(lineInfo.getLineNumber());
                         currentBlock.addLine(lineInfo);
-                        fileInfo.removeLine(lineInfo);
+                        toRemove.add(lineInfo);
+//                        fileInfo.removeLine(lineInfo);
 
                         foundStartAnnotation = true;
                     }
@@ -89,10 +93,13 @@ public class AnnotatorAnalyzer {
             } else {
                 if (foundStartAnnotation) {
                     currentBlock.addLine(lineInfo);
-                    fileInfo.removeLine(lineInfo);
+                    toRemove.add(lineInfo);
+//                    fileInfo.removeLine(lineInfo);
                 }
             }
         }
+        fileInfo.removeLines(toRemove);
+        fileInfo.addBlocks(toAdd);
     }
 
     /**
@@ -106,7 +113,7 @@ public class AnnotatorAnalyzer {
             Map<String, Author> authorAliasMap = authorConfig.getAuthorDetailsToAuthorMap();
             String authorsParameters = extractAuthorsParameters(line, formatIndex);
 
-            if (authorsParameters.isEmpty()) {
+            if (authorsParameters == null) {
                 if (!foundStartAnnotation) {
                     // Attribute to only unknown author if an empty author tag was provided, but not as an end author tag
                     HashMap<Author, Integer> newAnnotatedAuthors = new HashMap<>();
@@ -121,8 +128,9 @@ public class AnnotatorAnalyzer {
 
                 while(foundMatch) {
                     String parameters = matcher.group();
+
                     String[] splitParameters = parameters.split(" ");
-                    String author = splitParameters[0].split("@")[1];
+                    String author = splitParameters[0];
                     Integer weight = Integer.parseInt(splitParameters[1].isEmpty() ? "100" : splitParameters[1]);
 
                     if (!authorAliasMap.containsKey(author) && !AuthorConfiguration.hasAuthorConfigFile()) {
@@ -162,16 +170,24 @@ public class AnnotatorAnalyzer {
      */
     public static String extractAuthorsParameters(String line, int formatIndex) {
         String[] splitByAuthorTag = line.split(AUTHOR_TAG);
+
         if (splitByAuthorTag.length < 2) {
             return null;
         }
 
-        String[] splitByCommentFormat = splitByAuthorTag[1].trim().split(COMMENT_FORMATS[formatIndex][1]);
-        if (splitByCommentFormat.length == 0) {
-            return null;
+
+        String endComment = COMMENT_FORMATS[formatIndex][1];
+
+        if (Objects.equals(endComment, "\\s")) {
+            return splitByAuthorTag[1].trim();
+        } else {
+            String[] splitByCommentFormat = splitByAuthorTag[1].trim().split(endComment);
+            if (splitByCommentFormat.length == 0) {
+                return null;
+            }
+            String authorTagParameters = splitByCommentFormat[0];
+            return authorTagParameters.trim();
         }
-        String authorTagParameters = splitByCommentFormat[0];
-        return authorTagParameters.trim();
     }
 
     private static String generateCommentRegex(String commentStart, String commentEnd) {

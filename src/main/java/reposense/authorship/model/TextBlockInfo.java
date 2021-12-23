@@ -36,6 +36,7 @@ public class TextBlockInfo {
     public HashMap<Author, Integer> getAbsoluteContributionMap() {
         if (this.absoluteContributionMap == null) {
             int sum = 0;
+            HashMap<Author, Integer> map = new HashMap<>();
             Iterator<Map.Entry<Author, Integer>> iterator = contributionMap.entrySet().iterator();
             while (iterator.hasNext()) {
                 Map.Entry<Author, Integer> element = iterator.next();
@@ -45,7 +46,8 @@ public class TextBlockInfo {
             int totalLines = endLineNumber - startLineNumber;
             int finalSum = sum;
             contributionMap.forEach((author, integer) ->
-                contributionMap.put(author, (integer * totalLines) / finalSum));
+                    map.put(author, (integer * totalLines) / finalSum));
+            this.absoluteContributionMap = map;
         }
         return this.absoluteContributionMap;
 
@@ -69,6 +71,10 @@ public class TextBlockInfo {
 
     public void setEndLineNumber(int endLineNumber) {
         this.endLineNumber = endLineNumber;
+    }
+
+    public int numOfLines() {
+        return lines.size();
     }
 
     public void setTracked(boolean isTracked) {
